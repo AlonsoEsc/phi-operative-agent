@@ -14,7 +14,13 @@ Un cliente del sector *Retail & Cadena de Suministro* requiere resolver un cuell
 flowchart TD
     U["Usuario / operador logístico<br/>ADK Web UI o CLI"]
     A["LlmAgent · phi_operative_agent<br/>Google ADK: flujo, tools y sesión"]
-    G["GeminiResiliente · gemini-3.6-flash<br/>reintento + fallback ante 429 / 5xx"]
+
+    subgraph RES["GeminiResiliente · modelo_resiliente.ts"]
+        G["Gemini · gemini-3.6-flash"]
+        E{"¿Error 429 / 5xx?"}
+        R["Reintento automático<br/>si la espera sugerida ≤ 20 s · máx. 2"]
+        F["Respuesta de respaldo<br/>tipo de error + resultados ya obtenidos"]
+    end
 
     subgraph TOOLS["Tools · Function Calling"]
         T0["Paso 1 · Grounding<br/>consultar_politica_reabastecimiento"]
@@ -31,7 +37,13 @@ flowchart TD
     S[("Estado de sesión ADK<br/>alertas_emitidas")]
 
     U -->|"1. pregunta"| A
-    A <-->|"2. razonamiento y tool calls"| G
+    A -->|"2. prompt + historial"| G
+    G --> E
+    E -->|"no: tool calls o texto"| A
+    E -->|"sí, transitorio"| R
+    R -->|"reintenta"| G
+    E -->|"cuota diaria o espera larga"| F
+    F -->|"nunca silencio"| A
     A --> TOOLS
     T0 --> DOC
     T1 --> INV
@@ -43,7 +55,7 @@ flowchart TD
     A -->|"3. respuesta + folio"| U
 ```
 
-La regla de negocio vive en código (`validar_regla_alerta`): Gemini decide **cuándo** llamar a la herramienta, pero el código decide **si** la orden procede.
+La regla de negocio vive en código (`validar_regla_alerta`): Gemini decide **cuándo** llamar a la herramienta, pero el código decide **si** la orden procede. Si Gemini falla, `GeminiResiliente` reintenta los errores transitorios o responde con lo ya completado en el turno, de modo que un folio emitido no se pierde.
 
 ---
 
