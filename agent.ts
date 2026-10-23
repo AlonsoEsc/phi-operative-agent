@@ -11,6 +11,17 @@ if (process.env.GEMINI_API_KEY && !process.env.GOOGLE_GENAI_API_KEY) {
   process.env.GOOGLE_GENAI_API_KEY = process.env.GEMINI_API_KEY;
 }
 
+// Sin API Key el módulo debe seguir cargando (pruebas de herramientas, revisión del código):
+// el agente arranca y, al llamar a Gemini, responde con el fallback que pide revisar el .env.
+const apiKeyConfigurada =
+  Boolean(process.env.GOOGLE_GENAI_API_KEY || process.env.GOOGLE_API_KEY) ||
+  process.env.GOOGLE_GENAI_USE_VERTEXAI === 'true';
+if (!apiKeyConfigurada) {
+  console.warn(
+    '[phi_operative_agent] Falta GEMINI_API_KEY en .env: las herramientas funcionan, pero el agente no podrá llamar a Gemini.'
+  );
+}
+
 // Mock de inventario local según la Sección 5 del PDF de evaluación técnica.
 // El mínimo requerido NO vive aquí: su única fuente de verdad es el documento de políticas.
 const INVENTARIO_MOCK: Record<
@@ -413,7 +424,10 @@ export const rootAgent = new LlmAgent({
   name: 'phi_operative_agent',
   // Gemini con reintentos y respuesta de respaldo ante errores de cuota (429) o indisponibilidad (5xx)
   model: new GeminiResiliente(
-    { model: process.env.GEMINI_MODEL || 'gemini-3.6-flash' },
+    {
+      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+      ...(apiKeyConfigurada ? {} : { apiKey: 'sin-configurar' }),
+    },
     {
       maxReintentos: Number(process.env.GEMINI_MAX_REINTENTOS ?? 2),
       maxEsperaSeg: Number(process.env.GEMINI_MAX_ESPERA_SEG ?? 20),

@@ -12,43 +12,38 @@ Un cliente del sector *Retail & Cadena de Suministro* requiere resolver un cuell
 
 ```mermaid
 flowchart TD
-    subgraph Usuario["👤 Usuario / Operador Logístico"]
-        U["Pregunta en Lenguaje Natural\n(ej: '¿Hay riesgo de desabastecimiento de SKU-1024 en el Norte?')"]
+    U["Usuario / operador logístico<br/>ADK Web UI o CLI"]
+    A["LlmAgent · phi_operative_agent<br/>Google ADK: flujo, tools y sesión"]
+    G["GeminiResiliente · gemini-3.6-flash<br/>reintento + fallback ante 429 / 5xx"]
+
+    subgraph TOOLS["Tools · Function Calling"]
+        T0["Paso 1 · Grounding<br/>consultar_politica_reabastecimiento"]
+        T1["Paso 2 · Tool 1<br/>consultar_stock_sku"]
+        T2["Paso 3 · Tool 2<br/>enviar_alerta_distribucion"]
+        TH["Memoria<br/>consultar_historial_alertas"]
     end
 
-    subgraph Orquestacion["⚙️ Motor de Orquestación Antigravity (Google ADK)"]
-        ADK["LlmAgent: phi_operative_agent\n(Control de Flujo, Memoria de Sesión y Reglas de Negocio)"]
-    end
+    DOC[("Políticas · fuente única del mínimo<br/>data/politicas_reabastecimiento.md")]
+    INV[("Inventario mock<br/>stock + almacen_id")]
+    V{"validar_regla_alerta<br/>¿stock menor al mínimo,<br/>almacén correcto y sin duplicado?"}
+    CEDIS["CEDIS simulado<br/>Folio #ALT-XXXX"]
+    RECH["status: rechazada o duplicada<br/>sin folio nuevo"]
+    S[("Estado de sesión ADK<br/>alertas_emitidas")]
 
-    subgraph Cerebro["🧠 Gemini Enterprise LLM"]
-        GEM["Gemini (Vertex AI Studio / Gemini API)\nRazonamiento Grounded y Function Calling"]
-    end
-
-    subgraph Grounding["📚 Grounding / RAG ($0 USD Mock)"]
-        DOC["Políticas de Reabastecimiento\n(data/politicas_reabastecimiento.md)\nUmbrales mínimos por región y SKU"]
-        TOOL_RAG["Tool: consultar_politica_reabastecimiento"]
-    end
-
-    subgraph Tools["🛠️ Ejecución de Acciones (Function Calling)"]
-        TOOL_STOCK["Tool 1: consultar_stock_sku\n(Consulta unidades y almacén en inventario)"]
-        TOOL_ALERT["Tool 2: enviar_alerta_distribucion\n(Despacha orden a CEDIS y retorna Folio #ALT-XXXX)"]
-    end
-
-    subgraph Backend["💾 Sistemas Operativos / ERP Mock"]
-        INV["Base de Inventario Regional\n(Mock Local $0 USD)"]
-        CEDIS["Centro de Distribución / Logística\n(Historial de Alertas en Memoria)"]
-    end
-
-    U -->|"1. Envía prompt"| ADK
-    ADK <-->|"2. Orquesta razonamiento"| GEM
-    GEM -->|"3. Paso 1: Grounding RAG"| TOOL_RAG
-    TOOL_RAG <--> DOC
-    GEM -->|"4. Paso 2: Invoca Stock"| TOOL_STOCK
-    TOOL_STOCK <--> INV
-    GEM -->|"5. Paso 3: Evalúa regla (Stock < Mínimo)"| TOOL_ALERT
-    TOOL_ALERT <--> CEDIS
-    ADK -->|"6. Respuesta con Folio #ALT-XXXX"| U
+    U -->|"1. pregunta"| A
+    A <-->|"2. razonamiento y tool calls"| G
+    A --> TOOLS
+    T0 --> DOC
+    T1 --> INV
+    T2 --> V
+    V -->|"sí"| CEDIS
+    V -->|"no"| RECH
+    CEDIS --> S
+    TH --> S
+    A -->|"3. respuesta + folio"| U
 ```
+
+La regla de negocio vive en código (`validar_regla_alerta`): Gemini decide **cuándo** llamar a la herramienta, pero el código decide **si** la orden procede.
 
 ---
 
@@ -82,23 +77,22 @@ flowchart TD
 El proyecto está diseñado para ejecutarse sin incurrir en costos de infraestructura mediante el Free Tier de Gemini / GCP.
 
 ### Prerrequisitos
-- Node.js (versión 18 o superior).
-- Cuenta con API Key de Gemini (Google AI Studio / Vertex AI Free Tier).
+- Node.js 20 o superior (probado con Node.js 24).
+- API Key gratuita de Gemini: [Google AI Studio](https://aistudio.google.com/apikey).
 
 ### Instalación
 ```bash
-# 1. Clonar el repositorio y entrar al directorio
+git clone https://github.com/AlonsoEsc/phi-operative-agent.git
 cd phi-operative-agent
-
-# 2. Instalar dependencias
 npm install
 ```
 
 ### Configuración de Variables de Entorno (`.env`)
-Copiar la plantilla `.env.example` a `.env` y colocar tu API Key:
+Copiar la plantilla `.env.example` a `.env` (funciona en PowerShell, macOS y Linux; en `cmd` usar `copy`) y colocar tu API Key:
 ```bash
 cp .env.example .env
 ```
+> Sin API Key, `npm test` funciona igual: las pruebas no llaman a Gemini.
 ```env
 GEMINI_API_KEY=tu_api_key_aqui
 GEMINI_MODEL=gemini-3.6-flash
@@ -115,7 +109,7 @@ Inicia la consola web oficial del Agent Development Kit con inspector visual de 
 ```bash
 npm run dev
 ```
-Abre en tu navegador la URL indicada (habitualmente `http://localhost:3000` o la indicada en consola) para chatear con el agente en tiempo real.
+Abre en tu navegador `http://localhost:8000` (o la URL indicada en consola) y selecciona el agente para chatear en tiempo real. El panel de eventos muestra cada llamada a herramienta y la pestaña *State* muestra `alertas_emitidas`.
 
 ### B. Modo CLI Interactivo
 Para interactuar con el agente directamente desde tu terminal:
@@ -182,7 +176,11 @@ npm test
 ---
 
 ### Caso 6: Falla de Gemini (Graceful Fallback del Modelo)
-- **Cómo provocarlo sin gastar cuota**: arrancar con un modelo inexistente (`GEMINI_MODEL=gemini-modelo-inexistente`) o hacer varias preguntas seguidas hasta superar el límite por minuto.
+- **Cómo provocarlo sin gastar cuota**: arrancar con un modelo inexistente o hacer varias preguntas seguidas hasta superar el límite por minuto.
+  ```powershell
+  $env:GEMINI_MODEL="gemini-modelo-inexistente"; npm run dev
+  ```
+  (En bash: `GEMINI_MODEL=gemini-modelo-inexistente npm run dev`.)
 - **Respuesta Esperada**: un mensaje que explica la falla (cuota por minuto, cuota diaria, servicio no disponible o error de configuración) y lista lo que ya se completó en ese turno, en lugar de una respuesta vacía.
 
 ---
@@ -213,5 +211,5 @@ phi-operative-agent/
 ├── .env.example                       # Plantilla de variables de entorno (copiar a .env)
 ├── data/
 │   └── politicas_reabastecimiento.md  # Fuente no estructurada para RAG / Grounding
-└── README.md                          # Documentación del proyecto y guía de presentación
+└── README.md                          # Documentación, diagrama de arquitectura y guía de ejecución
 ```
