@@ -1,0 +1,35 @@
+# Dependencias
+node_modules/
+
+# Variables de entorno y secretos (usar .env.example como plantilla)
+.env
+.env.*
+!.env.example
+
+# Configuración local del entorno de desarrollo
+.claude/
+
+# Salidas de compilación y caché
+dist/
+build/
+*.tsbuildinfo
+.cache/
+coverage/
+
+# Archivos temporales de ADK
+.adk/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+*.swp
